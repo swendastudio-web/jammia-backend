@@ -1,0 +1,18 @@
+# Runs the PostgreSQL database for local development.
+# Start:  docker compose up -d
+# Stop:   docker compose down
+services:
+  postgres:
+    image: postgres:17
+    container_name: jamia-db
+    environment:
+      POSTGRES_DB: jamia
+      POSTGRES_USER: jamia
+      POSTGRES_PASSWORD: jamia_dev_password
+    ports:
+      - "5435:5432"   # your Mac's port 5435 -> the container's port 5432
+    volumes:
+      - jamia-db-data:/var/lib/postgresql/data
+
+volumes:
+  jamia-db-data:
