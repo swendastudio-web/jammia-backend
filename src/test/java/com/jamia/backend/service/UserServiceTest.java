@@ -3,6 +3,7 @@ package com.jamia.backend.service;
 import com.jamia.backend.entity.SubscriptionPlan;
 import com.jamia.backend.entity.SubscriptionPlanCode;
 import com.jamia.backend.entity.User;
+import com.jamia.backend.entity.UserRole;
 import com.jamia.backend.exception.EmailAlreadyUsedException;
 import com.jamia.backend.exception.UserNotFoundException;
 import com.jamia.backend.repository.SubscriptionPlanRepository;
@@ -103,5 +104,23 @@ class UserServiceTest {
         assertThat(updated.getLastName()).isEqualTo("Saleh");
         assertThat(updated.getPhoneNumber()).isEqualTo("+96891234567");
         assertThat(updated.getEmail()).isEqualTo("ali@mail.com");
+    }
+
+    @Test
+    void changeSubscriptionPlan_movesTheUserToTheNewPlan() {
+        User user = new User("Ali", "Hassan", "ali@mail.com", "hash");
+        user.setSubscriptionPlan(freePlan);
+        SubscriptionPlan goldPlan = new SubscriptionPlan(SubscriptionPlanCode.GOLD, 100);
+        when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+        when(subscriptionPlanRepository.findByCode(SubscriptionPlanCode.GOLD)).thenReturn(Optional.of(goldPlan));
+
+        User updated = userService.changeSubscriptionPlan(5L, SubscriptionPlanCode.GOLD);
+
+        assertThat(updated.getSubscriptionPlan()).isSameAs(goldPlan);
+    }
+
+    @Test
+    void newUsersAreNormalUsersNotAdmins() {
+        assertThat(new User("Ali", "Hassan", "ali@mail.com", "hash").getRole()).isEqualTo(UserRole.USER);
     }
 }

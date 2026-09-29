@@ -2,6 +2,8 @@ package com.jamia.backend.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -37,11 +39,20 @@ public class User {
     @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
+    // Optional. Name of the photo file on the server's disk (e.g. "3f2a...9c.jpg"), not the image itself.
+    @Column(name = "profile_photo_filename", length = 100)
+    private String profilePhotoFilename;
+
     // Every user has one plan; many users share the same plan.
     // EAGER: the plan (a tiny row) is always loaded together with the user.
     @ManyToOne(fetch = FetchType.EAGER, optional = false)
     @JoinColumn(name = "subscription_plan_id", nullable = false)
     private SubscriptionPlan subscriptionPlan;
+
+    // USER or ADMIN. New users are always USER.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private UserRole role = UserRole.USER;
 
     // Only the hashed (scrambled) password is stored, never the real password.
     @Column(name = "password_hash", nullable = false)
@@ -103,12 +114,24 @@ public class User {
         this.phoneNumber = phoneNumber;
     }
 
+    public String getProfilePhotoFilename() {
+        return profilePhotoFilename;
+    }
+
+    public void setProfilePhotoFilename(String profilePhotoFilename) {
+        this.profilePhotoFilename = profilePhotoFilename;
+    }
+
     public SubscriptionPlan getSubscriptionPlan() {
         return subscriptionPlan;
     }
 
     public void setSubscriptionPlan(SubscriptionPlan subscriptionPlan) {
         this.subscriptionPlan = subscriptionPlan;
+    }
+
+    public UserRole getRole() {
+        return role;
     }
 
     public String getPasswordHash() {

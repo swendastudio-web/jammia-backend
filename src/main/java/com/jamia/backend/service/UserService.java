@@ -3,6 +3,7 @@ package com.jamia.backend.service;
 import com.jamia.backend.entity.SubscriptionPlanCode;
 import com.jamia.backend.entity.User;
 import com.jamia.backend.exception.EmailAlreadyUsedException;
+import com.jamia.backend.exception.ResourceNotFoundException;
 import com.jamia.backend.exception.UserNotFoundException;
 import com.jamia.backend.repository.SubscriptionPlanRepository;
 import com.jamia.backend.repository.UserRepository;
@@ -62,6 +63,16 @@ public class UserService {
         user.setLastName(lastName.trim());
         user.setPhoneNumber(phoneNumber);
         // No save() needed: JPA writes changes to a loaded entity when the transaction ends.
+        return user;
+    }
+
+    // Admin only (checked in SecurityConfig): move a user to FREE, SILVER or GOLD.
+    // JAMIA does not take payments; the admin does this after the user has paid outside the app.
+    @Transactional
+    public User changeSubscriptionPlan(Long userId, SubscriptionPlanCode code) {
+        User user = getUserById(userId);
+        user.setSubscriptionPlan(subscriptionPlanRepository.findByCode(code)
+                .orElseThrow(() -> new ResourceNotFoundException("Subscription plan " + code + " not found")));
         return user;
     }
 

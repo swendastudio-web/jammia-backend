@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 
 /**
  * Business rules for signing in: login, getting new tokens (refresh) and logout.
@@ -123,12 +124,13 @@ public class AuthService {
         return new AuthResponse(accessToken, refreshToken, "Bearer", accessTokenMinutes * 60);
     }
 
-    // The JWT only contains the user id and times — no personal data, because anyone can read a JWT.
+    // The JWT only contains the user id, their role and times — no personal data, because anyone can read a JWT.
     private String createAccessToken(User user) {
         Instant now = Instant.now();
 
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .subject(user.getId().toString())
+                .claim("roles", List.of(user.getRole().name()))
                 .issuedAt(now)
                 .expiresAt(now.plus(accessTokenMinutes, ChronoUnit.MINUTES))
                 .build();

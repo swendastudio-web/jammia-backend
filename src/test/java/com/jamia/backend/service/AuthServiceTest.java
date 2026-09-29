@@ -73,6 +73,7 @@ class AuthServiceTest {
         // Access token: a valid JWT whose subject is the user id
         Jwt jwt = jwtDecoder.decode(response.accessToken());
         assertThat(jwt.getSubject()).isEqualTo("5");
+        assertThat(jwt.getClaimAsStringList("roles")).containsExactly("USER");
         assertThat(response.tokenType()).isEqualTo("Bearer");
         assertThat(response.expiresIn()).isEqualTo(3600);
 
