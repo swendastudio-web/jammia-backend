@@ -1,13 +1,12 @@
 package com.jamia.backend.entity;
 
 /**
- * The life of a savings room.
+ * The life of a savings room. It goes OPEN -> ACTIVE -> OPEN -> ACTIVE ... one round at a time.
  */
 public enum RoomStatus {
-    // Accepting members; turn order not decided yet.
+    // Between rounds (or before the first): people can join, the admin can change the size,
+    // remove members, and start the next round; members can leave.
     OPEN,
-    // Started: turn order is fixed, contributions are running, nobody can join.
-    ACTIVE,
-    // Every contribution of every cycle has been confirmed.
-    COMPLETED
+    // A round is running: the turn moves by the clock; nobody can join or leave.
+    ACTIVE
 }

@@ -5,6 +5,7 @@ import com.jamia.backend.dto.InvitePreviewResponse;
 import com.jamia.backend.dto.JoinRequestResponse;
 import com.jamia.backend.entity.JoinRequest;
 import com.jamia.backend.entity.JoinRequestStatus;
+import com.jamia.backend.entity.MemberStatus;
 import com.jamia.backend.entity.RoomInviteLink;
 import com.jamia.backend.entity.RoomMember;
 import com.jamia.backend.entity.RoomStatus;
@@ -67,10 +68,11 @@ public class InvitationService {
     @Transactional
     public InviteLinkResponse getOrCreateMyInviteLink(Long roomId, Long userId) {
         RoomMember member = memberRepository.findByRoomIdAndUserId(roomId, userId)
+                .filter(RoomMember::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
         SavingsRoom room = member.getRoom();
         if (room.getStatus() != RoomStatus.OPEN) {
-            throw new BusinessRuleException("This room has already started; nobody can join now");
+            throw new BusinessRuleException("A round is running; people can join after it ends");
         }
 
         RoomInviteLink link = inviteLinkRepository
@@ -97,11 +99,11 @@ public class InvitationService {
                 room.getContributionAmount(),
                 room.getCurrency(),
                 room.getFrequency(),
-                memberRepository.countByRoomId(room.getId()),
+                memberRepository.countByRoomIdAndStatus(room.getId(), MemberStatus.ACTIVE),
                 room.getMaxMembers(),
                 fullName(room.getCreator()),
                 fullName(link.getCreatedBy().getUser()),
-                memberRepository.existsByRoomIdAndUserId(room.getId(), userId),
+                memberRepository.existsByRoomIdAndUserIdAndStatus(room.getId(), userId, MemberStatus.ACTIVE),
                 joinRequestRepository.existsByRoomIdAndUserIdAndStatus(room.getId(), userId, JoinRequestStatus.PENDING)
         );
     }
@@ -113,15 +115,15 @@ public class InvitationService {
         SavingsRoom room = link.getRoom();
 
         if (room.getStatus() != RoomStatus.OPEN) {
-            throw new BusinessRuleException("This room has already started; nobody can join now");
+            throw new BusinessRuleException("A round is running; people can join after it ends");
         }
-        if (memberRepository.existsByRoomIdAndUserId(room.getId(), userId)) {
+        if (memberRepository.existsByRoomIdAndUserIdAndStatus(room.getId(), userId, MemberStatus.ACTIVE)) {
             throw new BusinessRuleException("You are already a member of this room");
         }
         if (joinRequestRepository.existsByRoomIdAndUserIdAndStatus(room.getId(), userId, JoinRequestStatus.PENDING)) {
             throw new BusinessRuleException("You have already asked to join this room");
         }
-        if (memberRepository.countByRoomId(room.getId()) >= room.getMaxMembers()) {
+        if (memberRepository.countByRoomIdAndStatus(room.getId(), MemberStatus.ACTIVE) >= room.getMaxMembers()) {
             throw new BusinessRuleException("This room is full");
         }
 
@@ -156,14 +158,18 @@ public class InvitationService {
         JoinRequest request = findPendingRequest(roomId, requestId);
 
         if (room.getStatus() != RoomStatus.OPEN) {
-            throw new BusinessRuleException("This room has already started; nobody can join now");
+            throw new BusinessRuleException("A round is running; people can join after it ends");
         }
-        if (memberRepository.countByRoomId(roomId) >= room.getMaxMembers()) {
+        if (memberRepository.countByRoomIdAndStatus(roomId, MemberStatus.ACTIVE) >= room.getMaxMembers()) {
             throw new BusinessRuleException("This room is full");
         }
-        if (!memberRepository.existsByRoomIdAndUserId(roomId, request.getUser().getId())) {
-            memberRepository.save(new RoomMember(room, request.getUser()));
-        }
+        // Someone who left (or was removed) earlier gets their old membership back; others get a new one.
+        memberRepository.findByRoomIdAndUserId(roomId, request.getUser().getId())
+                .ifPresentOrElse(
+                        existing -> {
+                            if (!existing.isActive()) existing.rejoin();
+                        },
+                        () -> memberRepository.save(new RoomMember(room, request.getUser())));
 
         request.approve();
         return JoinRequestResponse.from(request);
@@ -190,6 +196,7 @@ public class InvitationService {
     // Non-members get 404 (can't tell the room exists); members who aren't the creator get 403.
     private void requireCreator(Long roomId, Long userId) {
         RoomMember member = memberRepository.findByRoomIdAndUserId(roomId, userId)
+                .filter(RoomMember::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
         if (!member.getRoom().isCreatedBy(userId)) {
             throw new ForbiddenActionException("Only the room creator can manage join requests");

@@ -3,45 +3,64 @@ package com.jamia.backend.service;
 import com.jamia.backend.dto.ContributionResponse;
 import com.jamia.backend.entity.Contribution;
 import com.jamia.backend.entity.ContributionStatus;
+import com.jamia.backend.entity.MemberStatus;
+import com.jamia.backend.entity.RoomRound;
 import com.jamia.backend.exception.BusinessRuleException;
 import com.jamia.backend.exception.ForbiddenActionException;
 import com.jamia.backend.exception.ResourceNotFoundException;
 import com.jamia.backend.repository.ContributionRepository;
 import com.jamia.backend.repository.RoomMemberRepository;
+import com.jamia.backend.repository.RoomRoundRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
  * Business rules for payment tracking. JAMIA does not move money:
- * the payer reports "I paid" and the recipient reports "I received it".
+ * the payer reports "I paid" and the receiver reports "I received it".
+ * The turn moves by the clock even if someone has not paid; their payment then shows as late.
  */
 @Service
 public class ContributionService {
 
     private final ContributionRepository contributionRepository;
     private final RoomMemberRepository memberRepository;
+    private final RoomRoundRepository roundRepository;
+    private final Clock clock;
 
     public ContributionService(ContributionRepository contributionRepository,
-                               RoomMemberRepository memberRepository) {
+                               RoomMemberRepository memberRepository,
+                               RoomRoundRepository roundRepository,
+                               Clock clock) {
         this.contributionRepository = contributionRepository;
         this.memberRepository = memberRepository;
+        this.roundRepository = roundRepository;
+        this.clock = clock;
     }
 
-    // The room's contributions (all cycles, or one cycle). Only members can see them.
+    // The payments of one round (default: the newest round). Only members can see them.
     @Transactional(readOnly = true)
-    public List<ContributionResponse> getContributions(Long roomId, Long userId, Integer cycleNumber) {
+    public List<ContributionResponse> getContributions(Long roomId, Long userId, Integer roundNumber) {
         requireMember(roomId, userId);
 
-        List<Contribution> contributions = (cycleNumber == null)
-                ? contributionRepository.findByRoomIdOrderByCycleNumberAscIdAsc(roomId)
-                : contributionRepository.findByRoomIdAndCycleNumberOrderByIdAsc(roomId, cycleNumber);
+        RoomRound round = (roundNumber == null)
+                ? roundRepository.findFirstByRoomIdOrderByRoundNumberDesc(roomId).orElse(null)
+                : roundRepository.findByRoomIdAndRoundNumber(roomId, roundNumber)
+                        .orElseThrow(() -> new ResourceNotFoundException("Round not found"));
+        if (round == null) {
+            return List.of(); // no round has started yet
+        }
 
-        return contributions.stream().map(ContributionResponse::from).toList();
+        LocalDateTime now = LocalDateTime.now(clock);
+        return contributionRepository.findByRoundIdOrderByCycleNumberAscIdAsc(round.getId()).stream()
+                .map(c -> toResponse(c, now))
+                .toList();
     }
 
-    // The payer says "I paid". Only the payer can do this.
+    // The payer says "I paid". Only the payer can do this (also after the turn or round has passed).
     @Transactional
     public ContributionResponse markPaid(Long roomId, Long contributionId, Long userId) {
         Contribution contribution = findInRoom(roomId, contributionId, userId);
@@ -54,12 +73,11 @@ public class ContributionService {
         }
 
         contribution.markPaid();
-        return ContributionResponse.from(contribution);
+        return toResponse(contribution, LocalDateTime.now(clock));
     }
 
-    // The recipient says "I received it". Only the recipient can do this.
+    // The receiver says "I received it". Only the receiver can do this.
     // They may confirm even if the payer forgot to press "I paid".
-    // When the last contribution of the room is confirmed, the room is completed.
     @Transactional
     public ContributionResponse confirmReceived(Long roomId, Long contributionId, Long userId) {
         Contribution contribution = findInRoom(roomId, contributionId, userId);
@@ -72,13 +90,13 @@ public class ContributionService {
         }
 
         contribution.confirm();
+        return toResponse(contribution, LocalDateTime.now(clock));
+    }
 
-        // Hibernate saves the change above before running this query, so it is counted correctly.
-        if (!contributionRepository.existsByRoomIdAndStatusNot(roomId, ContributionStatus.CONFIRMED)) {
-            contribution.getRoom().complete();
-        }
-
-        return ContributionResponse.from(contribution);
+    private ContributionResponse toResponse(Contribution c, LocalDateTime now) {
+        RoomRound round = c.getRound();
+        LocalDateTime turnEndsAt = RoundSchedule.turnEndsAt(round, c.getRoom().getFrequency(), c.getCycleNumber());
+        return ContributionResponse.from(c, turnEndsAt, now);
     }
 
     private Contribution findInRoom(Long roomId, Long contributionId, Long userId) {
@@ -89,7 +107,7 @@ public class ContributionService {
 
     // Non-members get "not found", so they can't even tell whether the room exists.
     private void requireMember(Long roomId, Long userId) {
-        if (!memberRepository.existsByRoomIdAndUserId(roomId, userId)) {
+        if (!memberRepository.existsByRoomIdAndUserIdAndStatus(roomId, userId, MemberStatus.ACTIVE)) {
             throw new ResourceNotFoundException("Room not found");
         }
     }

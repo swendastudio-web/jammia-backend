@@ -59,7 +59,7 @@ class SavingsRoomControllerTest {
     @Test
     void createRoom_returns201AndPassesCleanedValues() throws Exception {
         RoomResponse created = new RoomResponse(10L, "Family", null, new BigDecimal("100.50"), "AED",
-                ContributionFrequency.MONTHLY, 5, RoomStatus.OPEN, null, null, 1L, null, List.of());
+                ContributionFrequency.MONTHLY, 5, RoomStatus.OPEN, 1L, null, List.of(), null, 0);
         when(roomService.createRoom(eq(1L), eq("Family"), isNull(), eq(new BigDecimal("100.50")), eq("AED"),
                 eq(ContributionFrequency.MONTHLY), eq(5))).thenReturn(created);
 

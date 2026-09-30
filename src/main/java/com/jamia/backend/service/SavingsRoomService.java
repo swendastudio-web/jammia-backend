@@ -2,12 +2,17 @@ package com.jamia.backend.service;
 
 import com.jamia.backend.dto.RoomResponse;
 import com.jamia.backend.dto.RoomSummaryResponse;
+import com.jamia.backend.dto.RoundResponse;
 import com.jamia.backend.entity.Contribution;
 import com.jamia.backend.entity.ContributionFrequency;
+import com.jamia.backend.entity.ContributionStatus;
 import com.jamia.backend.entity.JoinRequest;
 import com.jamia.backend.entity.JoinRequestStatus;
+import com.jamia.backend.entity.MemberStatus;
 import com.jamia.backend.entity.RoomMember;
+import com.jamia.backend.entity.RoomRound;
 import com.jamia.backend.entity.RoomStatus;
+import com.jamia.backend.entity.RoundStatus;
 import com.jamia.backend.entity.SavingsRoom;
 import com.jamia.backend.entity.TurnOrderMethod;
 import com.jamia.backend.entity.User;
@@ -19,14 +24,18 @@ import com.jamia.backend.exception.UserNotFoundException;
 import com.jamia.backend.repository.ContributionRepository;
 import com.jamia.backend.repository.JoinRequestRepository;
 import com.jamia.backend.repository.RoomMemberRepository;
+import com.jamia.backend.repository.RoomRoundRepository;
 import com.jamia.backend.repository.SavingsRoomRepository;
 import com.jamia.backend.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.security.SecureRandom;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -37,7 +46,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Business rules for savings rooms: create, view, and start (turn order + contribution schedule).
+ * Business rules for savings rooms, which run in ROUNDS:
+ * OPEN (join, change size, remove, leave) -> admin starts a round -> ACTIVE (the turn moves by the clock)
+ * -> the last turn ends -> OPEN again, everyone stays -> next round ...
  * Joining happens through invite links + the creator's approval (see InvitationService).
  * Methods return response objects because the database session closes when the service finishes
  * (open-in-view = false), so all data is loaded here.
@@ -48,94 +59,248 @@ public class SavingsRoomService {
     private final SavingsRoomRepository roomRepository;
     private final RoomMemberRepository memberRepository;
     private final ContributionRepository contributionRepository;
+    private final RoomRoundRepository roundRepository;
     private final UserRepository userRepository;
     private final JoinRequestRepository joinRequestRepository;
+    private final boolean fiveMinuteCyclesEnabled;
+    private final Clock clock;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public SavingsRoomService(SavingsRoomRepository roomRepository,
                               RoomMemberRepository memberRepository,
                               ContributionRepository contributionRepository,
+                              RoomRoundRepository roundRepository,
                               UserRepository userRepository,
-                              JoinRequestRepository joinRequestRepository) {
+                              JoinRequestRepository joinRequestRepository,
+                              @Value("${jamia.dev.five-minute-cycles}") boolean fiveMinuteCyclesEnabled,
+                              Clock clock) {
         this.roomRepository = roomRepository;
         this.memberRepository = memberRepository;
         this.contributionRepository = contributionRepository;
+        this.roundRepository = roundRepository;
         this.userRepository = userRepository;
         this.joinRequestRepository = joinRequestRepository;
+        this.fiveMinuteCyclesEnabled = fiveMinuteCyclesEnabled;
+        this.clock = clock;
     }
 
-    // Creates a room. The creator becomes its first member.
+    // Creates a room. The creator becomes its first member (and the room admin).
     @Transactional
     public RoomResponse createRoom(Long creatorId, String name, String description, BigDecimal contributionAmount,
                                    String currency, ContributionFrequency frequency, int maxMembers) {
+        if (frequency.isDevelopmentOnly() && !fiveMinuteCyclesEnabled) {
+            throw new BadRequestException("The 5-minute period is only for testing and is not available here");
+        }
         User creator = userRepository.findById(creatorId)
                 .orElseThrow(() -> new UserNotFoundException(creatorId));
-
-        // The creator's plan decides how big the room may be. The limit comes from the database.
-        int planLimit = creator.getSubscriptionPlan().getMaxMembersPerRoom();
-        if (maxMembers > planLimit) {
-            throw new BusinessRuleException("Your " + creator.getSubscriptionPlan().getCode()
-                    + " plan allows rooms of up to " + planLimit + " members");
-        }
+        checkPlanLimit(creator, maxMembers);
 
         SavingsRoom room = roomRepository.save(new SavingsRoom(name.trim(), description, contributionAmount,
                 currency, frequency, maxMembers, creator));
         RoomMember creatorMembership = memberRepository.save(new RoomMember(room, creator));
 
-        return RoomResponse.from(room, List.of(creatorMembership));
+        return RoomResponse.from(room, List.of(creatorMembership), null, 0);
     }
 
-    // The rooms the user belongs to.
+    // The rooms the user is an active member of.
     @Transactional(readOnly = true)
     public List<RoomSummaryResponse> getMyRooms(Long userId) {
-        return memberRepository.findByUserIdOrderByJoinedAtDesc(userId).stream()
+        return memberRepository.findByUserIdAndStatusOrderByJoinedAtDesc(userId, MemberStatus.ACTIVE).stream()
                 .map(membership -> RoomSummaryResponse.from(membership.getRoom(), userId))
                 .toList();
     }
 
-    // One room with its members. Only members can see it.
+    // One room with its members and its current round. Only active members can see it.
     @Transactional(readOnly = true)
     public RoomResponse getRoom(Long roomId, Long userId) {
         SavingsRoom room = roomRepository.findById(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
         requireMember(roomId, userId);
-        return RoomResponse.from(room, memberRepository.findByRoomIdOrderByTurnPositionAscIdAsc(roomId));
+        return toResponse(room);
     }
 
-    // Starts the room: fixes the turn order and creates every contribution for every cycle.
-    // After this, nobody can join.
+    // The admin starts a round: fixes the turn order and creates every payment of every turn.
+    // During the round nobody can join or leave. Works again for round 2, 3 ... after each round ends.
     @Transactional
     public RoomResponse startRoom(Long roomId, Long userId, TurnOrderMethod method,
                                   LocalDate startDate, List<Long> manualOrder) {
         SavingsRoom room = roomRepository.findByIdForUpdate(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
-        requireMember(roomId, userId);
-
-        if (!room.isCreatedBy(userId)) {
-            throw new ForbiddenActionException("Only the room creator can start the room");
-        }
+        requireAdmin(room, userId);
         if (room.getStatus() != RoomStatus.OPEN) {
-            throw new BusinessRuleException("This room has already started");
+            throw new BusinessRuleException("A round is already running");
         }
 
-        List<RoomMember> members = memberRepository.findByRoomIdOrderByTurnPositionAscIdAsc(roomId);
+        List<RoomMember> members = activeMembers(roomId);
         if (members.size() < 2) {
             throw new BusinessRuleException("A room needs at least 2 members to start");
         }
-
         List<RoomMember> turnOrder = decideTurnOrder(members, method, manualOrder);
-        for (int i = 0; i < turnOrder.size(); i++) {
-            turnOrder.get(i).setTurnPosition(i + 1);
-        }
+        assignTurns(members, turnOrder);
 
-        room.start(method, startDate);
-        contributionRepository.saveAll(buildContributionSchedule(room, turnOrder));
+        LocalDateTime startedAt = roundStart(room.getFrequency(), startDate);
+        LocalDateTime endsAt = room.getFrequency().startOfCycle(startedAt, turnOrder.size() + 1);
+        int roundNumber = (int) roundRepository.countByRoomId(roomId) + 1;
+        RoomRound round = roundRepository.save(new RoomRound(room, roundNumber, method, startedAt, endsAt));
 
-        // Nobody can join a started room, so requests still waiting are rejected.
+        room.startRound();
+        contributionRepository.saveAll(buildContributionSchedule(room, round, turnOrder));
+
+        // Nobody can join a running round, so requests still waiting are rejected.
         joinRequestRepository.findByRoomIdAndStatusOrderByCreatedAtAsc(roomId, JoinRequestStatus.PENDING)
                 .forEach(JoinRequest::reject);
 
-        return RoomResponse.from(room, turnOrder);
+        return toResponse(room);
+    }
+
+    // Admin, between rounds: change how many members the room may have.
+    @Transactional
+    public RoomResponse updateMaxMembers(Long roomId, Long userId, int maxMembers) {
+        SavingsRoom room = roomRepository.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+        requireAdmin(room, userId);
+        requireBetweenRounds(room, "The number of members can only be changed after the round ends");
+        checkPlanLimit(room.getCreator(), maxMembers);
+
+        long current = memberRepository.countByRoomIdAndStatus(roomId, MemberStatus.ACTIVE);
+        if (maxMembers < current) {
+            throw new BusinessRuleException("The room already has " + current
+                    + " members; remove members first or choose at least " + current);
+        }
+        room.setMaxMembers(maxMembers);
+        return toResponse(room);
+    }
+
+    // Admin, between rounds: remove a member (their payment history stays).
+    @Transactional
+    public RoomResponse removeMember(Long roomId, Long userId, Long memberUserId) {
+        SavingsRoom room = roomRepository.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+        requireAdmin(room, userId);
+        requireBetweenRounds(room, "Members can only be removed after the round ends");
+        if (room.isCreatedBy(memberUserId)) {
+            throw new BusinessRuleException("The room admin cannot remove themselves");
+        }
+        RoomMember member = memberRepository.findByRoomIdAndUserId(roomId, memberUserId)
+                .filter(RoomMember::isActive)
+                .orElseThrow(() -> new ResourceNotFoundException("Member not found"));
+
+        member.end(MemberStatus.REMOVED);
+        return toResponse(room);
+    }
+
+    // A member leaves the room, between rounds. The admin cannot leave (the room would have no admin).
+    @Transactional
+    public void leaveRoom(Long roomId, Long userId) {
+        SavingsRoom room = roomRepository.findByIdForUpdate(roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+        RoomMember member = memberRepository.findByRoomIdAndUserId(roomId, userId)
+                .filter(RoomMember::isActive)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+        if (room.isCreatedBy(userId)) {
+            throw new BusinessRuleException("The room admin cannot leave the room");
+        }
+        requireBetweenRounds(room, "You can leave the room after the current round ends");
+
+        member.end(MemberStatus.LEFT);
+    }
+
+    // The rounds history, newest first.
+    @Transactional(readOnly = true)
+    public List<RoundResponse> getRounds(Long roomId, Long userId) {
+        SavingsRoom room = roomRepository.findById(roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
+        requireMember(roomId, userId);
+        LocalDateTime now = LocalDateTime.now(clock);
+        return roundRepository.findByRoomIdOrderByRoundNumberDesc(roomId).stream()
+                .map(round -> toRoundResponse(room, round, now))
+                .toList();
+    }
+
+    // Called by the clock (RoundClockJob): finish every running round whose last turn has ended.
+    // The room becomes OPEN again and everyone stays for the next round.
+    @Transactional
+    public int completeFinishedRounds() {
+        LocalDateTime now = LocalDateTime.now(clock);
+        List<RoomRound> finished = roundRepository.findByStatusAndEndsAtLessThanEqual(RoundStatus.ACTIVE, now);
+        for (RoomRound round : finished) {
+            round.complete(now);
+            round.getRoom().finishRound();
+            // Turns are decided again when the next round starts.
+            activeMembers(round.getRoom().getId()).forEach(m -> m.setTurnPosition(null));
+        }
+        return finished.size();
+    }
+
+    // ----- helpers -----
+
+    private RoomResponse toResponse(SavingsRoom room) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        RoundResponse current = null;
+        long completed = 0;
+        for (RoomRound round : roundRepository.findByRoomIdOrderByRoundNumberDesc(room.getId())) {
+            if (round.getStatus() == RoundStatus.ACTIVE) {
+                current = toRoundResponse(room, round, now);
+            } else {
+                completed++;
+            }
+        }
+        return RoomResponse.from(room, activeMembers(room.getId()), current, completed);
+    }
+
+    private RoundResponse toRoundResponse(SavingsRoom room, RoomRound round, LocalDateTime now) {
+        ContributionFrequency frequency = room.getFrequency();
+        int turnCount = RoundSchedule.turnCount(round, frequency);
+        boolean running = round.getStatus() == RoundStatus.ACTIVE;
+        int currentTurn = running ? RoundSchedule.currentTurn(round, frequency, now) : turnCount + 1;
+
+        Long currentRecipient = null;
+        LocalDateTime currentTurnEndsAt = null;
+        if (currentTurn >= 1 && currentTurn <= turnCount) {
+            currentTurnEndsAt = RoundSchedule.turnEndsAt(round, frequency, currentTurn);
+            currentRecipient = contributionRepository.findByRoundIdOrderByCycleNumberAscIdAsc(round.getId()).stream()
+                    .filter(c -> c.getCycleNumber() == currentTurn)
+                    .map(c -> c.getRecipient().getUser().getId())
+                    .findFirst()
+                    .orElse(null);
+        }
+
+        return new RoundResponse(
+                round.getRoundNumber(),
+                round.getStatus(),
+                round.getTurnOrderMethod(),
+                round.getStartedAt(),
+                round.getEndsAt(),
+                round.getCompletedAt(),
+                turnCount,
+                currentTurn,
+                currentRecipient,
+                currentTurnEndsAt,
+                contributionRepository.countByRoundId(round.getId()),
+                contributionRepository.countByRoundIdAndStatus(round.getId(), ContributionStatus.CONFIRMED)
+        );
+    }
+
+    // 5-minute test rooms start at once. Others start on the chosen day (today = now).
+    private LocalDateTime roundStart(ContributionFrequency frequency, LocalDate startDate) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        if (frequency.isDevelopmentOnly()) {
+            return now;
+        }
+        if (startDate == null) {
+            throw new BadRequestException("Start date is required");
+        }
+        LocalDateTime startOfDay = startDate.atStartOfDay();
+        return startOfDay.isAfter(now) ? startOfDay : now;
+    }
+
+    // The database allows each turn number only once per room, so old turns are cleared first.
+    private void assignTurns(List<RoomMember> members, List<RoomMember> turnOrder) {
+        members.forEach(m -> m.setTurnPosition(null));
+        memberRepository.saveAllAndFlush(members);
+        for (int i = 0; i < turnOrder.size(); i++) {
+            turnOrder.get(i).setTurnPosition(i + 1);
+        }
     }
 
     private List<RoomMember> decideTurnOrder(List<RoomMember> members, TurnOrderMethod method,
@@ -162,16 +327,17 @@ public class SavingsRoomService {
         return manualOrder.stream().map(membersByUserId::get).toList();
     }
 
-    // Cycle 1 goes to turn 1, cycle 2 to turn 2, ... Every other member pays the recipient each cycle.
-    private List<Contribution> buildContributionSchedule(SavingsRoom room, List<RoomMember> turnOrder) {
+    // Turn 1 goes to the first in the order, turn 2 to the second, ... Every other member pays the receiver.
+    private List<Contribution> buildContributionSchedule(SavingsRoom room, RoomRound round,
+                                                         List<RoomMember> turnOrder) {
         List<Contribution> schedule = new ArrayList<>();
-        for (int cycle = 1; cycle <= turnOrder.size(); cycle++) {
-            RoomMember recipient = turnOrder.get(cycle - 1);
-            LocalDate dueDate = room.getFrequency().dueDateOfCycle(room.getStartDate(), cycle);
+        for (int turn = 1; turn <= turnOrder.size(); turn++) {
+            RoomMember recipient = turnOrder.get(turn - 1);
+            LocalDateTime dueAt = room.getFrequency().startOfCycle(round.getStartedAt(), turn);
 
             for (RoomMember payer : turnOrder) {
                 if (payer != recipient) {
-                    schedule.add(new Contribution(room, cycle, dueDate, payer, recipient,
+                    schedule.add(new Contribution(round, turn, dueAt, payer, recipient,
                             room.getContributionAmount()));
                 }
             }
@@ -179,10 +345,35 @@ public class SavingsRoomService {
         return schedule;
     }
 
+    private void checkPlanLimit(User creator, int maxMembers) {
+        int planLimit = creator.getSubscriptionPlan().getMaxMembersPerRoom();
+        if (maxMembers > planLimit) {
+            throw new BusinessRuleException("Your " + creator.getSubscriptionPlan().getCode()
+                    + " plan allows rooms of up to " + planLimit + " members");
+        }
+    }
+
+    private List<RoomMember> activeMembers(Long roomId) {
+        return memberRepository.findByRoomIdAndStatusOrderByTurnPositionAscIdAsc(roomId, MemberStatus.ACTIVE);
+    }
+
     // Non-members get "not found", so they can't even tell whether the room exists.
     private void requireMember(Long roomId, Long userId) {
-        if (!memberRepository.existsByRoomIdAndUserId(roomId, userId)) {
+        if (!memberRepository.existsByRoomIdAndUserIdAndStatus(roomId, userId, MemberStatus.ACTIVE)) {
             throw new ResourceNotFoundException("Room not found");
+        }
+    }
+
+    private void requireAdmin(SavingsRoom room, Long userId) {
+        requireMember(room.getId(), userId);
+        if (!room.isCreatedBy(userId)) {
+            throw new ForbiddenActionException("Only the room admin can do this");
+        }
+    }
+
+    private void requireBetweenRounds(SavingsRoom room, String message) {
+        if (room.getStatus() != RoomStatus.OPEN) {
+            throw new BusinessRuleException(message);
         }
     }
 }

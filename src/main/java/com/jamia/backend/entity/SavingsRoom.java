@@ -14,7 +14,6 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -58,13 +57,6 @@ public class SavingsRoom {
     @Column(nullable = false, length = 20)
     private RoomStatus status;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "turn_order_method", length = 20)
-    private TurnOrderMethod turnOrderMethod;
-
-    @Column(name = "start_date")
-    private LocalDate startDate;
-
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -89,15 +81,19 @@ public class SavingsRoom {
         this.createdAt = LocalDateTime.now();
     }
 
-    // Called when the creator starts the room: the turn order is now fixed.
-    public void start(TurnOrderMethod turnOrderMethod, LocalDate startDate) {
-        this.turnOrderMethod = turnOrderMethod;
-        this.startDate = startDate;
+    // The admin started a round: nobody can join or leave until it ends.
+    public void startRound() {
         this.status = RoomStatus.ACTIVE;
     }
 
-    public void complete() {
-        this.status = RoomStatus.COMPLETED;
+    // The round ended: the room is open again (everyone stays).
+    public void finishRound() {
+        this.status = RoomStatus.OPEN;
+    }
+
+    // Only between rounds (checked in the service).
+    public void setMaxMembers(int maxMembers) {
+        this.maxMembers = maxMembers;
     }
 
     public boolean isCreatedBy(Long userId) {
@@ -138,14 +134,6 @@ public class SavingsRoom {
 
     public RoomStatus getStatus() {
         return status;
-    }
-
-    public TurnOrderMethod getTurnOrderMethod() {
-        return turnOrderMethod;
-    }
-
-    public LocalDate getStartDate() {
-        return startDate;
     }
 
     public LocalDateTime getCreatedAt() {

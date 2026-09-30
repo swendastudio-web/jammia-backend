@@ -27,13 +27,13 @@ public class ContributionController {
         this.contributionService = contributionService;
     }
 
-    // GET /api/rooms/{roomId}/contributions            -> all cycles
-    // GET /api/rooms/{roomId}/contributions?cycle=2    -> one cycle
+    // GET /api/rooms/{roomId}/contributions           -> payments of the newest round
+    // GET /api/rooms/{roomId}/contributions?round=1   -> payments of round 1 (history)
     @GetMapping
     public List<ContributionResponse> getContributions(@AuthenticationPrincipal Jwt jwt,
                                                        @PathVariable Long roomId,
-                                                       @RequestParam(required = false) Integer cycle) {
-        return contributionService.getContributions(roomId, currentUserId(jwt), cycle);
+                                                       @RequestParam(required = false) Integer round) {
+        return contributionService.getContributions(roomId, currentUserId(jwt), round);
     }
 
     // POST /api/rooms/{roomId}/contributions/{id}/paid -> payer says "I paid"

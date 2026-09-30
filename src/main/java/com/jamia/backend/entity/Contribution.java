@@ -13,7 +13,6 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -32,12 +31,18 @@ public class Contribution {
     @JoinColumn(name = "room_id", nullable = false)
     private SavingsRoom room;
 
+    // The round (rotation) this payment belongs to.
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "round_id", nullable = false)
+    private RoomRound round;
+
     // Cycle 1 is paid to the member with turn 1, cycle 2 to turn 2, and so on.
     @Column(name = "cycle_number", nullable = false)
     private int cycleNumber;
 
-    @Column(name = "due_date", nullable = false)
-    private LocalDate dueDate;
+    // When this turn begins (the payment is due). An exact time, so short test periods work.
+    @Column(name = "due_at", nullable = false)
+    private LocalDateTime dueAt;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "payer_member_id", nullable = false)
@@ -64,11 +69,12 @@ public class Contribution {
     protected Contribution() {
     }
 
-    public Contribution(SavingsRoom room, int cycleNumber, LocalDate dueDate,
+    public Contribution(RoomRound round, int cycleNumber, LocalDateTime dueAt,
                         RoomMember payer, RoomMember recipient, BigDecimal amount) {
-        this.room = room;
+        this.room = round.getRoom();
+        this.round = round;
         this.cycleNumber = cycleNumber;
-        this.dueDate = dueDate;
+        this.dueAt = dueAt;
         this.payer = payer;
         this.recipient = recipient;
         this.amount = amount;
@@ -95,12 +101,16 @@ public class Contribution {
         return room;
     }
 
+    public RoomRound getRound() {
+        return round;
+    }
+
     public int getCycleNumber() {
         return cycleNumber;
     }
 
-    public LocalDate getDueDate() {
-        return dueDate;
+    public LocalDateTime getDueAt() {
+        return dueAt;
     }
 
     public RoomMember getPayer() {

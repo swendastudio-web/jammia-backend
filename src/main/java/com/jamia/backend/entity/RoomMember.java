@@ -2,6 +2,8 @@ package com.jamia.backend.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -39,6 +41,14 @@ public class RoomMember {
     @Column(name = "joined_at", nullable = false, updatable = false)
     private LocalDateTime joinedAt;
 
+    // ACTIVE, LEFT or REMOVED. Members are never deleted, so their payment history stays correct.
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private MemberStatus status = MemberStatus.ACTIVE;
+
+    @Column(name = "left_at")
+    private LocalDateTime leftAt;
+
     // JPA needs an empty constructor to create objects from database rows.
     protected RoomMember() {
     }
@@ -75,5 +85,30 @@ public class RoomMember {
 
     public LocalDateTime getJoinedAt() {
         return joinedAt;
+    }
+
+    public MemberStatus getStatus() {
+        return status;
+    }
+
+    public boolean isActive() {
+        return status == MemberStatus.ACTIVE;
+    }
+
+    public LocalDateTime getLeftAt() {
+        return leftAt;
+    }
+
+    // The member leaves, or the admin removes them. Their turn is cleared.
+    public void end(MemberStatus newStatus) {
+        this.status = newStatus;
+        this.leftAt = LocalDateTime.now();
+        this.turnPosition = null;
+    }
+
+    // Someone who left earlier is accepted into the room again.
+    public void rejoin() {
+        this.status = MemberStatus.ACTIVE;
+        this.leftAt = null;
     }
 }

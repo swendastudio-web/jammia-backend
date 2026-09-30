@@ -8,10 +8,11 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * The data the creator sends to start the room.
+ * The data the admin sends to start a round.
  *
- * @param turnOrderMethod RANDOM (the app shuffles) or MANUAL (the creator decides)
- * @param startDate       due date of the first cycle (today or later)
+ * @param turnOrderMethod RANDOM (the app shuffles) or MANUAL (the admin decides)
+ * @param startDate       the day turn 1 begins (today or later). Not needed for 5-minute test rooms,
+ *                        which start at once. If it is today, the round starts now.
  * @param memberOrder     only for MANUAL: every member's user id, first receiver first
  */
 public record StartRoomRequest(
@@ -19,7 +20,6 @@ public record StartRoomRequest(
         @NotNull(message = "Turn order method is required (RANDOM or MANUAL)")
         TurnOrderMethod turnOrderMethod,
 
-        @NotNull(message = "Start date is required")
         @FutureOrPresent(message = "Start date cannot be in the past")
         LocalDate startDate,
 

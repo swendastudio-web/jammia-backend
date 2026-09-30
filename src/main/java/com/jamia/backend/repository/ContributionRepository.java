@@ -9,22 +9,20 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Reads and saves contributions (payment tracking).
+ * Reads and saves contributions (payment tracking), per round.
  */
 public interface ContributionRepository extends JpaRepository<Contribution, Long> {
 
-    // All contributions of a room, by cycle. Payer and recipient (with their users) come in the same query.
-    @EntityGraph(attributePaths = {"payer.user", "recipient.user"})
-    List<Contribution> findByRoomIdOrderByCycleNumberAscIdAsc(Long roomId);
-
-    // Only one cycle of a room.
-    @EntityGraph(attributePaths = {"payer.user", "recipient.user"})
-    List<Contribution> findByRoomIdAndCycleNumberOrderByIdAsc(Long roomId, int cycleNumber);
+    // All contributions of one round, by cycle. Payer and recipient (with their users) come in the same query.
+    @EntityGraph(attributePaths = {"payer.user", "recipient.user", "round"})
+    List<Contribution> findByRoundIdOrderByCycleNumberAscIdAsc(Long roundId);
 
     // One contribution, making sure it belongs to the given room.
-    @EntityGraph(attributePaths = {"payer.user", "recipient.user", "room"})
+    @EntityGraph(attributePaths = {"payer.user", "recipient.user", "room", "round"})
     Optional<Contribution> findByIdAndRoomId(Long id, Long roomId);
 
-    // Used to check if the room is finished: are there any contributions not yet confirmed?
-    boolean existsByRoomIdAndStatusNot(Long roomId, ContributionStatus status);
+    // For the rounds history: how many payments, how many received.
+    long countByRoundId(Long roundId);
+
+    long countByRoundIdAndStatus(Long roundId, ContributionStatus status);
 }
