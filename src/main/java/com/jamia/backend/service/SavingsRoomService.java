@@ -171,13 +171,17 @@ public class SavingsRoomService {
         return toResponse(room);
     }
 
-    // Admin, between rounds: remove a member (their payment history stays).
+    // Admin: remove a member (their payment history stays).
+    // Between rounds: they simply leave the room.
+    // During a round (Phase B):
+    //  - they have NOT received yet -> their turn is removed, later turns move up, nobody pays them,
+    //    and they stop owing for turns that have not started (what they already owe stays);
+    //  - they HAVE received -> their turn stays and they keep owing everyone after them (reminded in the app).
     @Transactional
     public RoomResponse removeMember(Long roomId, Long userId, Long memberUserId) {
         SavingsRoom room = roomRepository.findByIdForUpdate(roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
         requireAdmin(room, userId);
-        requireBetweenRounds(room, "Members can only be removed after the round ends");
         if (room.isCreatedBy(memberUserId)) {
             throw new BusinessRuleException("The room admin cannot remove themselves");
         }
@@ -185,8 +189,58 @@ public class SavingsRoomService {
                 .filter(RoomMember::isActive)
                 .orElseThrow(() -> new ResourceNotFoundException("Member not found"));
 
-        member.end(MemberStatus.REMOVED);
+        if (room.getStatus() == RoomStatus.ACTIVE) {
+            removeDuringRound(room, member);
+        } else {
+            member.end(MemberStatus.REMOVED);
+        }
         return toResponse(room);
+    }
+
+    private void removeDuringRound(SavingsRoom room, RoomMember member) {
+        RoomRound round = roundRepository.findFirstByRoomIdOrderByRoundNumberDesc(room.getId())
+                .filter(r -> r.getStatus() == RoundStatus.ACTIVE)
+                .orElseThrow(() -> new IllegalStateException("Active room without a running round"));
+        ContributionFrequency frequency = room.getFrequency();
+        LocalDateTime now = LocalDateTime.now(clock);
+        int turnCount = RoundSchedule.turnCount(round, frequency);
+        int currentTurn = RoundSchedule.currentTurn(round, frequency, now);
+        Integer memberTurn = member.getTurnPosition();
+        boolean alreadyReceived = memberTurn == null || currentTurn >= memberTurn;
+
+        member.end(MemberStatus.REMOVED); // clears their turn number
+        memberRepository.flush();
+        if (alreadyReceived) {
+            return; // their payments to the people after them stay open: they still owe them
+        }
+
+        // 1. Their turn disappears, and they stop owing for turns that have not started yet.
+        List<Contribution> payments = contributionRepository.findByRoundIdOrderByCycleNumberAscIdAsc(round.getId());
+        List<Contribution> removed = payments.stream()
+                .filter(c -> c.getCycleNumber() == memberTurn
+                        || (c.getPayer().getId().equals(member.getId()) && c.getCycleNumber() > currentTurn))
+                .toList();
+        contributionRepository.deleteAll(removed);
+        contributionRepository.flush();
+
+        // 2. Everyone after them moves up one turn (one turn at a time: each turn number is unique).
+        for (int turn = memberTurn + 1; turn <= turnCount; turn++) {
+            int newTurn = turn - 1;
+            LocalDateTime newDueAt = frequency.startOfCycle(round.getStartedAt(), newTurn);
+            payments.stream()
+                    .filter(c -> !removed.contains(c) && c.getCycleNumber() == newTurn + 1)
+                    .forEach(c -> c.moveToTurn(newTurn, newDueAt));
+            contributionRepository.flush();
+        }
+        for (RoomMember m : activeMembers(room.getId())) {
+            if (m.getTurnPosition() != null && m.getTurnPosition() > memberTurn) {
+                m.setTurnPosition(m.getTurnPosition() - 1);
+                memberRepository.flush();
+            }
+        }
+
+        // 3. The round is one period shorter.
+        round.shortenTo(frequency.startOfCycle(round.getStartedAt(), turnCount));
     }
 
     // A member leaves the room, between rounds. The admin cannot leave (the room would have no admin).

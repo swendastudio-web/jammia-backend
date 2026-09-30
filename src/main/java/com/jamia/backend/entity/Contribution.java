@@ -81,6 +81,12 @@ public class Contribution {
         this.status = ContributionStatus.PENDING;
     }
 
+    // A turn before this one was removed: this payment moves up one turn (earlier time).
+    public void moveToTurn(int cycleNumber, LocalDateTime dueAt) {
+        this.cycleNumber = cycleNumber;
+        this.dueAt = dueAt;
+    }
+
     // The payer says "I paid".
     public void markPaid() {
         this.status = ContributionStatus.PAID;

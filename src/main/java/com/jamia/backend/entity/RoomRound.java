@@ -67,6 +67,11 @@ public class RoomRound {
         this.status = RoundStatus.ACTIVE;
     }
 
+    // A member who had not received yet was removed: the round is one turn (one period) shorter.
+    public void shortenTo(LocalDateTime newEndsAt) {
+        this.endsAt = newEndsAt;
+    }
+
     public void complete(LocalDateTime now) {
         this.status = RoundStatus.COMPLETED;
         this.completedAt = now;

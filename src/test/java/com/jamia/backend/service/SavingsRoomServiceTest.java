@@ -338,16 +338,47 @@ class SavingsRoomServiceTest {
     }
 
     @Test
-    void removeMember_notDuringARoundAndNotTheAdmin() {
+    void removeMember_theAdminCannotRemoveThemselves() {
         SavingsRoom room = room(10L, 3, ContributionFrequency.MONTHLY);
         givenRoom(room, List.of(member(room, amal), member(room, badr)));
 
         assertThatThrownBy(() -> roomService.removeMember(10L, 1L, 1L))
                 .hasMessage("The room admin cannot remove themselves");
+    }
 
-        room.startRound();
-        assertThatThrownBy(() -> roomService.removeMember(10L, 1L, 2L))
-                .hasMessage("Members can only be removed after the round ends");
+    @Test
+    void removeMember_duringARound_notReceivedYet_turnRemovedLaterTurnsMoveUp() {
+        roomService = service(true, NOW);
+        // 3 turns of 5 minutes started 2 minutes ago: turn 1 (Amal) is running; Badr = turn 2, Carim = turn 3
+        Fixture f = runningRound(NOW.minusMinutes(2));
+
+        roomService.removeMember(10L, 1L, 2L);
+
+        assertThat(f.b.getStatus()).isEqualTo(MemberStatus.REMOVED);
+        // Deleted: Badr's turn (both payments to him) and his payment for turn 3 (not started)
+        List<Contribution> deleted = deletedPayments();
+        assertThat(deleted).containsExactlyInAnyOrder(f.aToB, f.cToB, f.bToC);
+        // Kept: what Badr already owes for the running turn 1
+        assertThat(deleted).doesNotContain(f.bToA);
+        // Carim moves up from turn 3 to turn 2, five minutes earlier
+        assertThat(f.c.getTurnPosition()).isEqualTo(2);
+        assertThat(f.aToC.getCycleNumber()).isEqualTo(2);
+        assertThat(f.aToC.getDueAt()).isEqualTo(f.start.plusMinutes(5));
+        // The round is one turn shorter
+        assertThat(f.round.getEndsAt()).isEqualTo(f.start.plusMinutes(10));
+    }
+
+    @Test
+    void removeMember_duringARound_alreadyReceived_keepsWhatTheyOwe() {
+        roomService = service(true, NOW);
+        Fixture f = runningRound(NOW.minusMinutes(7)); // turn 2 (Badr) is running: Badr has received
+
+        roomService.removeMember(10L, 1L, 2L);
+
+        assertThat(f.b.getStatus()).isEqualTo(MemberStatus.REMOVED);
+        verify(contributionRepository, never()).deleteAll(anyList());
+        assertThat(f.bToC.getCycleNumber()).isEqualTo(3); // he still owes Carim in turn 3
+        assertThat(f.round.getEndsAt()).isEqualTo(f.start.plusMinutes(15));
     }
 
     @Test
@@ -378,6 +409,65 @@ class SavingsRoomServiceTest {
     }
 
     // ----- helpers -----
+
+    /** A running 5-minute round: Amal turn 1, Badr turn 2, Carim turn 3, with all 6 payments. */
+    private Fixture runningRound(LocalDateTime start) {
+        SavingsRoom room = room(10L, 3, ContributionFrequency.FIVE_MINUTES);
+        room.startRound();
+        Fixture f = new Fixture();
+        f.start = start;
+        f.a = member(room, amal);
+        f.b = member(room, badr);
+        f.c = member(room, carim);
+        long id = 100;
+        for (RoomMember m : List.of(f.a, f.b, f.c)) {
+            ReflectionTestUtils.setField(m, "id", id++);
+        }
+        f.a.setTurnPosition(1);
+        f.b.setTurnPosition(2);
+        f.c.setTurnPosition(3);
+        f.round = new RoomRound(room, 1, TurnOrderMethod.MANUAL, start, start.plusMinutes(15));
+        ContributionFrequency five = ContributionFrequency.FIVE_MINUTES;
+        f.bToA = pay(f.round, 1, five.startOfCycle(start, 1), f.b, f.a);
+        f.cToA = pay(f.round, 1, five.startOfCycle(start, 1), f.c, f.a);
+        f.aToB = pay(f.round, 2, five.startOfCycle(start, 2), f.a, f.b);
+        f.cToB = pay(f.round, 2, five.startOfCycle(start, 2), f.c, f.b);
+        f.aToC = pay(f.round, 3, five.startOfCycle(start, 3), f.a, f.c);
+        f.bToC = pay(f.round, 3, five.startOfCycle(start, 3), f.b, f.c);
+        ReflectionTestUtils.setField(f.round, "id", 7L);
+
+        givenRoom(room, List.of(f.a, f.b, f.c));
+        when(memberRepository.findByRoomIdAndUserId(10L, 2L)).thenReturn(Optional.of(f.b));
+        when(roundRepository.findFirstByRoomIdOrderByRoundNumberDesc(10L)).thenReturn(Optional.of(f.round));
+        when(contributionRepository.findByRoundIdOrderByCycleNumberAscIdAsc(7L))
+                .thenReturn(List.of(f.bToA, f.cToA, f.aToB, f.cToB, f.aToC, f.bToC));
+        return f;
+    }
+
+    private static Contribution pay(RoomRound round, int turn, LocalDateTime dueAt, RoomMember payer, RoomMember to) {
+        return new Contribution(round, turn, dueAt, payer, to, new BigDecimal("10.00"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Contribution> deletedPayments() {
+        ArgumentCaptor<List<Contribution>> captor = ArgumentCaptor.forClass(List.class);
+        verify(contributionRepository).deleteAll(captor.capture());
+        return captor.getValue();
+    }
+
+    private static class Fixture {
+        LocalDateTime start;
+        RoomMember a;
+        RoomMember b;
+        RoomMember c;
+        RoomRound round;
+        Contribution bToA;
+        Contribution cToA;
+        Contribution aToB;
+        Contribution cToB;
+        Contribution aToC;
+        Contribution bToC;
+    }
 
     private SavingsRoomService service(boolean fiveMinutes, LocalDateTime now) {
         Clock clock = Clock.fixed(now.atZone(ZONE).toInstant(), ZONE);

@@ -1,6 +1,7 @@
 package com.jamia.backend.service;
 
 import com.jamia.backend.dto.ContributionResponse;
+import com.jamia.backend.dto.OwedPaymentResponse;
 import com.jamia.backend.entity.Contribution;
 import com.jamia.backend.entity.ContributionStatus;
 import com.jamia.backend.entity.MemberStatus;
@@ -60,12 +61,14 @@ public class ContributionService {
                 .toList();
     }
 
-    // The payer says "I paid". Only the payer can do this (also after the turn or round has passed).
+    // The payer says "I paid". Only the payer can do this (also after the turn or round has passed,
+    // and also a member who was removed but still owes this payment).
     @Transactional
     public ContributionResponse markPaid(Long roomId, Long contributionId, Long userId) {
-        Contribution contribution = findInRoom(roomId, contributionId, userId);
-
+        Contribution contribution = contributionRepository.findByIdAndRoomId(contributionId, roomId)
+                .orElseThrow(() -> new ResourceNotFoundException("Contribution not found"));
         if (!contribution.getPayer().getUser().getId().equals(userId)) {
+            requireMember(roomId, userId); // strangers get "not found"
             throw new ForbiddenActionException("Only the payer can mark this contribution as paid");
         }
         if (contribution.getStatus() != ContributionStatus.PENDING) {
@@ -91,6 +94,18 @@ public class ContributionService {
 
         contribution.confirm();
         return toResponse(contribution, LocalDateTime.now(clock));
+    }
+
+    // Reminders: everything the user still has to pay (turn started, not marked paid), in every room.
+    @Transactional(readOnly = true)
+    public List<OwedPaymentResponse> getOwedPayments(Long userId) {
+        LocalDateTime now = LocalDateTime.now(clock);
+        return contributionRepository
+                .findByPayerUserIdAndStatusAndDueAtLessThanEqualOrderByDueAtAsc(userId, ContributionStatus.PENDING, now)
+                .stream()
+                .map(c -> OwedPaymentResponse.from(c,
+                        RoundSchedule.turnEndsAt(c.getRound(), c.getRoom().getFrequency(), c.getCycleNumber()), now))
+                .toList();
     }
 
     private ContributionResponse toResponse(Contribution c, LocalDateTime now) {

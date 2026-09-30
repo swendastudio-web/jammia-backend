@@ -106,11 +106,46 @@ class ContributionServiceTest {
 
     @Test
     void aPaidPaymentIsNeverLate() {
-        givenPaymentVisibleTo(PAYER_ID);
+        when(contributionRepository.findByIdAndRoomId(CONTRIBUTION_ID, ROOM_ID)).thenReturn(Optional.of(contribution));
         ContributionResponse paid = service(ROUND_START.plusMinutes(8)).markPaid(ROOM_ID, CONTRIBUTION_ID, PAYER_ID);
 
         assertThat(paid.status()).isEqualTo(ContributionStatus.PAID);
         assertThat(paid.late()).isFalse();
+    }
+
+    @Test
+    void markPaid_aRemovedMemberCanStillPayWhatTheyOwe() {
+        // No active membership needed: the payer is the payer.
+        when(contributionRepository.findByIdAndRoomId(CONTRIBUTION_ID, ROOM_ID)).thenReturn(Optional.of(contribution));
+
+        assertThat(service(ROUND_START).markPaid(ROOM_ID, CONTRIBUTION_ID, PAYER_ID).status())
+                .isEqualTo(ContributionStatus.PAID);
+    }
+
+    @Test
+    void markPaid_strangersGetNotFound() {
+        when(contributionRepository.findByIdAndRoomId(CONTRIBUTION_ID, ROOM_ID)).thenReturn(Optional.of(contribution));
+        when(memberRepository.existsByRoomIdAndUserIdAndStatus(ROOM_ID, 99L, MemberStatus.ACTIVE)).thenReturn(false);
+
+        assertThatThrownBy(() -> service(ROUND_START).markPaid(ROOM_ID, CONTRIBUTION_ID, 99L))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void owedPayments_listWhatTheUserStillHasToPay() {
+        LocalDateTime now = ROUND_START.plusMinutes(6);
+        ReflectionTestUtils.setField(contribution.getRoom(), "id", ROOM_ID);
+        when(contributionRepository.findByPayerUserIdAndStatusAndDueAtLessThanEqualOrderByDueAtAsc(
+                PAYER_ID, ContributionStatus.PENDING, now)).thenReturn(List.of(contribution));
+
+        var owed = service(now).getOwedPayments(PAYER_ID);
+
+        assertThat(owed).singleElement().satisfies(o -> {
+            assertThat(o.roomName()).isEqualTo("Test");
+            assertThat(o.amount()).isEqualByComparingTo("10.00");
+            assertThat(o.late()).isTrue();        // turn 1 ended at 10:05
+            assertThat(o.stillMember()).isTrue();
+        });
     }
 
     @Test
@@ -123,7 +158,7 @@ class ContributionServiceTest {
 
     @Test
     void markPaid_cannotBeDoneTwice() {
-        givenPaymentVisibleTo(PAYER_ID);
+        when(contributionRepository.findByIdAndRoomId(CONTRIBUTION_ID, ROOM_ID)).thenReturn(Optional.of(contribution));
         contribution.markPaid();
 
         assertThatThrownBy(() -> service(ROUND_START).markPaid(ROOM_ID, CONTRIBUTION_ID, PAYER_ID))
