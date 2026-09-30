@@ -4,6 +4,8 @@ import com.jamia.backend.dto.RoomResponse;
 import com.jamia.backend.dto.RoomSummaryResponse;
 import com.jamia.backend.entity.Contribution;
 import com.jamia.backend.entity.ContributionFrequency;
+import com.jamia.backend.entity.JoinRequest;
+import com.jamia.backend.entity.JoinRequestStatus;
 import com.jamia.backend.entity.RoomMember;
 import com.jamia.backend.entity.RoomStatus;
 import com.jamia.backend.entity.SavingsRoom;
@@ -15,6 +17,7 @@ import com.jamia.backend.exception.ForbiddenActionException;
 import com.jamia.backend.exception.ResourceNotFoundException;
 import com.jamia.backend.exception.UserNotFoundException;
 import com.jamia.backend.repository.ContributionRepository;
+import com.jamia.backend.repository.JoinRequestRepository;
 import com.jamia.backend.repository.RoomMemberRepository;
 import com.jamia.backend.repository.SavingsRoomRepository;
 import com.jamia.backend.repository.UserRepository;
@@ -34,31 +37,31 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Business rules for savings rooms: create, view, join, and start (turn order + contribution schedule).
+ * Business rules for savings rooms: create, view, and start (turn order + contribution schedule).
+ * Joining happens through invite links + the creator's approval (see InvitationService).
  * Methods return response objects because the database session closes when the service finishes
  * (open-in-view = false), so all data is loaded here.
  */
 @Service
 public class SavingsRoomService {
 
-    // Join codes avoid look-alike characters (0/O, 1/I/L) so they are easy to read out loud.
-    private static final String JOIN_CODE_CHARACTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-    private static final int JOIN_CODE_LENGTH = 8;
-
     private final SavingsRoomRepository roomRepository;
     private final RoomMemberRepository memberRepository;
     private final ContributionRepository contributionRepository;
     private final UserRepository userRepository;
+    private final JoinRequestRepository joinRequestRepository;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public SavingsRoomService(SavingsRoomRepository roomRepository,
                               RoomMemberRepository memberRepository,
                               ContributionRepository contributionRepository,
-                              UserRepository userRepository) {
+                              UserRepository userRepository,
+                              JoinRequestRepository joinRequestRepository) {
         this.roomRepository = roomRepository;
         this.memberRepository = memberRepository;
         this.contributionRepository = contributionRepository;
         this.userRepository = userRepository;
+        this.joinRequestRepository = joinRequestRepository;
     }
 
     // Creates a room. The creator becomes its first member.
@@ -76,7 +79,7 @@ public class SavingsRoomService {
         }
 
         SavingsRoom room = roomRepository.save(new SavingsRoom(name.trim(), description, contributionAmount,
-                currency, frequency, maxMembers, creator, newJoinCode()));
+                currency, frequency, maxMembers, creator));
         RoomMember creatorMembership = memberRepository.save(new RoomMember(room, creator));
 
         return RoomResponse.from(room, List.of(creatorMembership));
@@ -97,29 +100,6 @@ public class SavingsRoomService {
                 .orElseThrow(() -> new ResourceNotFoundException("Room not found"));
         requireMember(roomId, userId);
         return RoomResponse.from(room, memberRepository.findByRoomIdOrderByTurnPositionAscIdAsc(roomId));
-    }
-
-    // Joins a room using the code the creator shared.
-    @Transactional
-    public RoomResponse joinRoom(Long userId, String joinCode) {
-        SavingsRoom room = roomRepository.findByJoinCodeForUpdate(joinCode)
-                .orElseThrow(() -> new ResourceNotFoundException("No room found with this join code"));
-
-        if (room.getStatus() != RoomStatus.OPEN) {
-            throw new BusinessRuleException("This room has already started; nobody can join now");
-        }
-        if (memberRepository.existsByRoomIdAndUserId(room.getId(), userId)) {
-            throw new BusinessRuleException("You are already a member of this room");
-        }
-        if (memberRepository.countByRoomId(room.getId()) >= room.getMaxMembers()) {
-            throw new BusinessRuleException("This room is full");
-        }
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new UserNotFoundException(userId));
-        memberRepository.save(new RoomMember(room, user));
-
-        return RoomResponse.from(room, memberRepository.findByRoomIdOrderByTurnPositionAscIdAsc(room.getId()));
     }
 
     // Starts the room: fixes the turn order and creates every contribution for every cycle.
@@ -150,6 +130,10 @@ public class SavingsRoomService {
 
         room.start(method, startDate);
         contributionRepository.saveAll(buildContributionSchedule(room, turnOrder));
+
+        // Nobody can join a started room, so requests still waiting are rejected.
+        joinRequestRepository.findByRoomIdAndStatusOrderByCreatedAtAsc(roomId, JoinRequestStatus.PENDING)
+                .forEach(JoinRequest::reject);
 
         return RoomResponse.from(room, turnOrder);
     }
@@ -200,17 +184,5 @@ public class SavingsRoomService {
         if (!memberRepository.existsByRoomIdAndUserId(roomId, userId)) {
             throw new ResourceNotFoundException("Room not found");
         }
-    }
-
-    private String newJoinCode() {
-        String code;
-        do {
-            StringBuilder builder = new StringBuilder(JOIN_CODE_LENGTH);
-            for (int i = 0; i < JOIN_CODE_LENGTH; i++) {
-                builder.append(JOIN_CODE_CHARACTERS.charAt(secureRandom.nextInt(JOIN_CODE_CHARACTERS.length())));
-            }
-            code = builder.toString();
-        } while (roomRepository.existsByJoinCode(code));
-        return code;
     }
 }

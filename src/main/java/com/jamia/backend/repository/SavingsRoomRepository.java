@@ -14,15 +14,8 @@ import java.util.Optional;
  */
 public interface SavingsRoomRepository extends JpaRepository<SavingsRoom, Long> {
 
-    // Used to make sure a new join code is not already taken.
-    boolean existsByJoinCode(String joinCode);
-
-    // Used by join and start. The lock makes other requests for the same room wait,
-    // so two people can't take the last seat at the same moment.
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT r FROM SavingsRoom r WHERE r.joinCode = :joinCode")
-    Optional<SavingsRoom> findByJoinCodeForUpdate(@Param("joinCode") String joinCode);
-
+    // Used when approving a join request and when starting the room. The lock makes other
+    // requests for the same room wait, so two approvals can't take the last seat at the same moment.
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM SavingsRoom r WHERE r.id = :id")
     Optional<SavingsRoom> findByIdForUpdate(@Param("id") Long id);

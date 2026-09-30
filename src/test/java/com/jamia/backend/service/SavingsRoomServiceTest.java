@@ -3,6 +3,8 @@ package com.jamia.backend.service;
 import com.jamia.backend.dto.RoomResponse;
 import com.jamia.backend.entity.Contribution;
 import com.jamia.backend.entity.ContributionFrequency;
+import com.jamia.backend.entity.JoinRequest;
+import com.jamia.backend.entity.JoinRequestStatus;
 import com.jamia.backend.entity.RoomMember;
 import com.jamia.backend.entity.RoomStatus;
 import com.jamia.backend.entity.SavingsRoom;
@@ -15,6 +17,7 @@ import com.jamia.backend.exception.BusinessRuleException;
 import com.jamia.backend.exception.ForbiddenActionException;
 import com.jamia.backend.exception.ResourceNotFoundException;
 import com.jamia.backend.repository.ContributionRepository;
+import com.jamia.backend.repository.JoinRequestRepository;
 import com.jamia.backend.repository.RoomMemberRepository;
 import com.jamia.backend.repository.SavingsRoomRepository;
 import com.jamia.backend.repository.UserRepository;
@@ -54,6 +57,8 @@ class SavingsRoomServiceTest {
     private ContributionRepository contributionRepository;
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private JoinRequestRepository joinRequestRepository;
 
     private SavingsRoomService roomService;
 
@@ -63,7 +68,8 @@ class SavingsRoomServiceTest {
 
     @BeforeEach
     void setUp() {
-        roomService = new SavingsRoomService(roomRepository, memberRepository, contributionRepository, userRepository);
+        roomService = new SavingsRoomService(roomRepository, memberRepository, contributionRepository, userRepository,
+                joinRequestRepository);
         SubscriptionPlan freePlan = new SubscriptionPlan(SubscriptionPlanCode.FREE, 5);
         amal = user(1L, "Amal", freePlan);
         badr = user(2L, "Badr", freePlan);
@@ -84,7 +90,6 @@ class SavingsRoomServiceTest {
     @Test
     void createRoom_savesRoomAsOpenWithCreatorAsFirstMember() {
         when(userRepository.findById(1L)).thenReturn(Optional.of(amal));
-        when(roomRepository.existsByJoinCode(any())).thenReturn(false);
         when(roomRepository.save(any(SavingsRoom.class))).thenAnswer(call -> call.getArgument(0));
         when(memberRepository.save(any(RoomMember.class))).thenAnswer(call -> call.getArgument(0));
 
@@ -93,7 +98,6 @@ class SavingsRoomServiceTest {
 
         assertThat(response.name()).isEqualTo("Family");
         assertThat(response.status()).isEqualTo(RoomStatus.OPEN);
-        assertThat(response.joinCode()).hasSize(8);
         assertThat(response.members()).extracting("firstName").containsExactly("Amal");
     }
 
@@ -106,41 +110,6 @@ class SavingsRoomServiceTest {
         assertThatThrownBy(() -> roomService.getRoom(10L, 3L))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessage("Room not found");
-    }
-
-    @Test
-    void joinRoom_rejectsARoomThatHasStarted() {
-        SavingsRoom room = room(10L, 3);
-        room.start(TurnOrderMethod.RANDOM, LocalDate.now());
-        when(roomRepository.findByJoinCodeForUpdate("CODE2345")).thenReturn(Optional.of(room));
-
-        assertThatThrownBy(() -> roomService.joinRoom(3L, "CODE2345"))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasMessageContaining("already started");
-    }
-
-    @Test
-    void joinRoom_rejectsAFullRoom() {
-        SavingsRoom room = room(10L, 2);
-        when(roomRepository.findByJoinCodeForUpdate("CODE2345")).thenReturn(Optional.of(room));
-        when(memberRepository.existsByRoomIdAndUserId(10L, 3L)).thenReturn(false);
-        when(memberRepository.countByRoomId(10L)).thenReturn(2L);
-
-        assertThatThrownBy(() -> roomService.joinRoom(3L, "CODE2345"))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasMessage("This room is full");
-        verify(memberRepository, never()).save(any());
-    }
-
-    @Test
-    void joinRoom_rejectsSomeoneWhoIsAlreadyAMember() {
-        SavingsRoom room = room(10L, 3);
-        when(roomRepository.findByJoinCodeForUpdate("CODE2345")).thenReturn(Optional.of(room));
-        when(memberRepository.existsByRoomIdAndUserId(10L, 2L)).thenReturn(true);
-
-        assertThatThrownBy(() -> roomService.joinRoom(2L, "CODE2345"))
-                .isInstanceOf(BusinessRuleException.class)
-                .hasMessage("You are already a member of this room");
     }
 
     @Test
@@ -191,6 +160,19 @@ class SavingsRoomServiceTest {
     }
 
     @Test
+    void startRoom_rejectsJoinRequestsThatAreStillWaiting() {
+        SavingsRoom room = room(10L, 3);
+        givenRoomForStart(room, List.of(member(room, amal), member(room, badr)));
+        JoinRequest waiting = new JoinRequest(room, carim, member(room, badr));
+        when(joinRequestRepository.findByRoomIdAndStatusOrderByCreatedAtAsc(10L, JoinRequestStatus.PENDING))
+                .thenReturn(List.of(waiting));
+
+        roomService.startRoom(10L, 1L, TurnOrderMethod.RANDOM, LocalDate.now(), null);
+
+        assertThat(waiting.getStatus()).isEqualTo(JoinRequestStatus.REJECTED);
+    }
+
+    @Test
     void startRoom_manualOrderMustListEveryMemberExactlyOnce() {
         SavingsRoom room = room(10L, 3);
         givenRoomForStart(room, List.of(member(room, amal), member(room, badr), member(room, carim)));
@@ -234,7 +216,7 @@ class SavingsRoomServiceTest {
     // A room created by Amal (user 1)
     private SavingsRoom room(Long id, int maxMembers) {
         SavingsRoom room = new SavingsRoom("Family", null, new BigDecimal("100.00"), "AED",
-                ContributionFrequency.MONTHLY, maxMembers, amal, "CODE2345");
+                ContributionFrequency.MONTHLY, maxMembers, amal);
         ReflectionTestUtils.setField(room, "id", id);
         return room;
     }

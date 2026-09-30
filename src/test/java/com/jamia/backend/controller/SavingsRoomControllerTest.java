@@ -59,14 +59,14 @@ class SavingsRoomControllerTest {
     @Test
     void createRoom_returns201AndPassesCleanedValues() throws Exception {
         RoomResponse created = new RoomResponse(10L, "Family", null, new BigDecimal("100.50"), "AED",
-                ContributionFrequency.MONTHLY, 5, RoomStatus.OPEN, null, null, "CODE2345", 1L, null, List.of());
+                ContributionFrequency.MONTHLY, 5, RoomStatus.OPEN, null, null, 1L, null, List.of());
         when(roomService.createRoom(eq(1L), eq("Family"), isNull(), eq(new BigDecimal("100.50")), eq("AED"),
                 eq(ContributionFrequency.MONTHLY), eq(5))).thenReturn(created);
 
         mockMvc.perform(post("/api/rooms").header("Authorization", bearer())
                         .contentType(MediaType.APPLICATION_JSON).content(VALID_ROOM))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.joinCode").value("CODE2345"))
+                .andExpect(jsonPath("$.id").value(10))
                 .andExpect(jsonPath("$.status").value("OPEN"));
     }
 

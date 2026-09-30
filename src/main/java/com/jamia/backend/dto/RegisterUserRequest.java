@@ -2,6 +2,7 @@ package com.jamia.backend.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -26,7 +27,11 @@ public record RegisterUserRequest(
         // BCrypt only uses the first 72 bytes of a password, so we cap it there.
         @NotBlank(message = "Password is required")
         @Size(min = 8, max = 72, message = "Password must be between 8 and 72 characters")
-        String password
+        String password,
+
+        // Optional. The app's language, e.g. "en", "ar", "fr", "ru", "am". Default "en".
+        @Pattern(regexp = "^[a-z]{2,3}$", message = "Language must be a language code like en or ar")
+        String preferredLanguage
 ) {
 
     // Runs when the request is created, before validation:
@@ -34,6 +39,9 @@ public record RegisterUserRequest(
     public RegisterUserRequest {
         if (email != null) {
             email = email.trim();
+        }
+        if (preferredLanguage == null || preferredLanguage.isBlank()) {
+            preferredLanguage = "en";
         }
     }
 }

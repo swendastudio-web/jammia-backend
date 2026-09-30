@@ -54,10 +54,6 @@ public class SavingsRoom {
     @JoinColumn(name = "creator_id", nullable = false)
     private User creator;
 
-    // Secret code the creator shares so others can join.
-    @Column(name = "join_code", nullable = false, unique = true, length = 12)
-    private String joinCode;
-
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private RoomStatus status;
@@ -77,7 +73,7 @@ public class SavingsRoom {
     }
 
     public SavingsRoom(String name, String description, BigDecimal contributionAmount, String currency,
-                       ContributionFrequency frequency, int maxMembers, User creator, String joinCode) {
+                       ContributionFrequency frequency, int maxMembers, User creator) {
         this.name = name;
         this.description = description;
         this.contributionAmount = contributionAmount;
@@ -85,7 +81,6 @@ public class SavingsRoom {
         this.frequency = frequency;
         this.maxMembers = maxMembers;
         this.creator = creator;
-        this.joinCode = joinCode;
         this.status = RoomStatus.OPEN;
     }
 
@@ -139,10 +134,6 @@ public class SavingsRoom {
 
     public User getCreator() {
         return creator;
-    }
-
-    public String getJoinCode() {
-        return joinCode;
     }
 
     public RoomStatus getStatus() {

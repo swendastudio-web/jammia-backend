@@ -1,7 +1,6 @@
 package com.jamia.backend.controller;
 
 import com.jamia.backend.dto.CreateRoomRequest;
-import com.jamia.backend.dto.JoinRoomRequest;
 import com.jamia.backend.dto.RoomResponse;
 import com.jamia.backend.dto.RoomSummaryResponse;
 import com.jamia.backend.dto.StartRoomRequest;
@@ -53,13 +52,6 @@ public class SavingsRoomController {
     @GetMapping("/{roomId}")
     public RoomResponse getRoom(@AuthenticationPrincipal Jwt jwt, @PathVariable Long roomId) {
         return roomService.getRoom(roomId, currentUserId(jwt));
-    }
-
-    // POST /api/rooms/join -> join a room with its join code
-    @PostMapping("/join")
-    public RoomResponse joinRoom(@AuthenticationPrincipal Jwt jwt,
-                                 @Valid @RequestBody JoinRoomRequest request) {
-        return roomService.joinRoom(currentUserId(jwt), request.joinCode());
     }
 
     // POST /api/rooms/{roomId}/start -> creator fixes the turn order; contributions are created

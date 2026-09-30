@@ -67,7 +67,7 @@ class UserControllerTest {
     @Test
     void registerUser_returns201AndNeverReturnsPassword() throws Exception {
         User saved = new User("Ali", "Hassan", "ali@mail.com", "hashed-value");
-        when(userService.registerUser(anyString(), anyString(), anyString(), anyString())).thenReturn(saved);
+        when(userService.registerUser(anyString(), anyString(), anyString(), anyString(), anyString())).thenReturn(saved);
 
         mockMvc.perform(post("/api/users")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -102,7 +102,7 @@ class UserControllerTest {
     @Test
     void registerUser_acceptsEmailWithSpacesAround() throws Exception {
         User saved = new User("Ali", "Hassan", "ali@mail.com", "hashed-value");
-        when(userService.registerUser(anyString(), anyString(), anyString(), anyString())).thenReturn(saved);
+        when(userService.registerUser(anyString(), anyString(), anyString(), anyString(), anyString())).thenReturn(saved);
 
         String requestWithSpaces = """
                 {
@@ -120,8 +120,32 @@ class UserControllerTest {
     }
 
     @Test
+    void registerUser_usesEnglishWhenNoLanguageIsSent() throws Exception {
+        User saved = new User("Ali", "Hassan", "ali@mail.com", "hashed-value");
+        when(userService.registerUser("Ali", "Hassan", "ali@mail.com", "secret123", "en")).thenReturn(saved);
+
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_REQUEST))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.preferredLanguage").value("en"));
+    }
+
+    @Test
+    void registerUser_rejectsALanguageThatIsNotACode() throws Exception {
+        mockMvc.perform(post("/api/users")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"firstName": "Ali", "lastName": "Hassan", "email": "ali@mail.com",
+                                 "password": "secret123", "preferredLanguage": "Arabic"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.preferredLanguage").exists());
+    }
+
+    @Test
     void registerUser_returns409WhenEmailIsAlreadyUsed() throws Exception {
-        when(userService.registerUser(anyString(), anyString(), anyString(), anyString()))
+        when(userService.registerUser(anyString(), anyString(), anyString(), anyString(), anyString()))
                 .thenThrow(new EmailAlreadyUsedException("ali@mail.com"));
 
         mockMvc.perform(post("/api/users")
@@ -176,7 +200,7 @@ class UserControllerTest {
     void updateProfile_savesNameAndPhone() throws Exception {
         User updated = new User("Ali", "Saleh", "ali@mail.com", "hashed-value");
         updated.setPhoneNumber("+96891234567");
-        when(userService.updateProfile(5L, "Ali", "Saleh", "+96891234567")).thenReturn(updated);
+        when(userService.updateProfile(5L, "Ali", "Saleh", "+96891234567", null)).thenReturn(updated);
 
         mockMvc.perform(put("/api/users/me")
                         .header("Authorization", "Bearer " + validToken())
@@ -192,7 +216,7 @@ class UserControllerTest {
     @Test
     void updateProfile_treatsEmptyPhoneAsNoPhone() throws Exception {
         User updated = new User("Ali", "Hassan", "ali@mail.com", "hashed-value");
-        when(userService.updateProfile(eq(5L), eq("Ali"), eq("Hassan"), isNull())).thenReturn(updated);
+        when(userService.updateProfile(eq(5L), eq("Ali"), eq("Hassan"), isNull(), isNull())).thenReturn(updated);
 
         mockMvc.perform(put("/api/users/me")
                         .header("Authorization", "Bearer " + validToken())

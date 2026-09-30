@@ -32,7 +32,8 @@ public class UserService {
     }
 
     @Transactional
-    public User registerUser(String firstName, String lastName, String email, String password) {
+    public User registerUser(String firstName, String lastName, String email, String password,
+                             String preferredLanguage) {
         String normalizedEmail = email.trim().toLowerCase();
 
         if (userRepository.existsByEmail(normalizedEmail)) {
@@ -41,6 +42,7 @@ public class UserService {
 
         String passwordHash = passwordEncoder.encode(password);
         User user = new User(firstName.trim(), lastName.trim(), normalizedEmail, passwordHash);
+        user.setPreferredLanguage(preferredLanguage);
 
         // Every new user starts on the FREE plan.
         user.setSubscriptionPlan(subscriptionPlanRepository.findByCode(SubscriptionPlanCode.FREE)
@@ -57,11 +59,15 @@ public class UserService {
 
     // Updates the editable profile fields. Email cannot be changed (it is the login ID).
     @Transactional
-    public User updateProfile(Long userId, String firstName, String lastName, String phoneNumber) {
+    public User updateProfile(Long userId, String firstName, String lastName, String phoneNumber,
+                              String preferredLanguage) {
         User user = getUserById(userId);
         user.setFirstName(firstName.trim());
         user.setLastName(lastName.trim());
         user.setPhoneNumber(phoneNumber);
+        if (preferredLanguage != null) {
+            user.setPreferredLanguage(preferredLanguage);
+        }
         // No save() needed: JPA writes changes to a loaded entity when the transaction ends.
         return user;
     }

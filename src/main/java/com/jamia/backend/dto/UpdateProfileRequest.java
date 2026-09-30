@@ -20,7 +20,11 @@ public record UpdateProfileRequest(
         // Optional. International format: "+" then 8-15 digits, e.g. +96891234567
         @Pattern(regexp = "^\\+[1-9][0-9]{7,14}$",
                 message = "Phone number must be in international format, e.g. +96891234567")
-        String phoneNumber
+        String phoneNumber,
+
+        // Optional. Leave out to keep the current language.
+        @Pattern(regexp = "^[a-z]{2,3}$", message = "Language must be a language code like en or ar")
+        String preferredLanguage
 ) {
 
     // Before validation: remove spaces around the phone, and treat an empty phone as "no phone".

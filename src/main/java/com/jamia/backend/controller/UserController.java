@@ -44,7 +44,8 @@ public class UserController {
                 request.firstName(),
                 request.lastName(),
                 request.email(),
-                request.password()
+                request.password(),
+                request.preferredLanguage()
         );
         return UserResponse.from(user);
     }
@@ -64,7 +65,8 @@ public class UserController {
                 currentUserId(jwt),
                 request.firstName(),
                 request.lastName(),
-                request.phoneNumber()
+                request.phoneNumber(),
+                request.preferredLanguage()
         );
         return UserResponse.from(user);
     }

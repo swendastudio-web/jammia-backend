@@ -55,7 +55,7 @@ class UserServiceTest {
         when(subscriptionPlanRepository.findByCode(SubscriptionPlanCode.FREE)).thenReturn(Optional.of(freePlan));
         when(userRepository.saveAndFlush(any(User.class))).thenAnswer(call -> call.getArgument(0));
 
-        User user = userService.registerUser(" Ali ", " Hassan ", " Ali@Mail.com ", "secret123");
+        User user = userService.registerUser(" Ali ", " Hassan ", " Ali@Mail.com ", "secret123", "ar");
 
         assertThat(user.getFirstName()).isEqualTo("Ali");
         assertThat(user.getLastName()).isEqualTo("Hassan");
@@ -63,13 +63,14 @@ class UserServiceTest {
         assertThat(user.getPasswordHash()).isNotEqualTo("secret123");
         assertThat(passwordEncoder.matches("secret123", user.getPasswordHash())).isTrue();
         assertThat(user.getSubscriptionPlan()).isSameAs(freePlan);
+        assertThat(user.getPreferredLanguage()).isEqualTo("ar");
     }
 
     @Test
     void registerUser_rejectsEmailThatIsAlreadyUsed() {
         when(userRepository.existsByEmail("ali@mail.com")).thenReturn(true);
 
-        assertThatThrownBy(() -> userService.registerUser("Ali", "Hassan", "ali@mail.com", "secret123"))
+        assertThatThrownBy(() -> userService.registerUser("Ali", "Hassan", "ali@mail.com", "secret123", "en"))
                 .isInstanceOf(EmailAlreadyUsedException.class);
         verify(userRepository, never()).saveAndFlush(any(User.class));
     }
@@ -81,7 +82,7 @@ class UserServiceTest {
         when(userRepository.saveAndFlush(any(User.class)))
                 .thenThrow(new DataIntegrityViolationException("duplicate key"));
 
-        assertThatThrownBy(() -> userService.registerUser("Ali", "Hassan", "ali@mail.com", "secret123"))
+        assertThatThrownBy(() -> userService.registerUser("Ali", "Hassan", "ali@mail.com", "secret123", "en"))
                 .isInstanceOf(EmailAlreadyUsedException.class);
     }
 
@@ -98,12 +99,21 @@ class UserServiceTest {
         User user = new User("Ali", "Hassan", "ali@mail.com", "hash");
         when(userRepository.findById(5L)).thenReturn(Optional.of(user));
 
-        User updated = userService.updateProfile(5L, " Ali ", " Saleh ", "+96891234567");
+        User updated = userService.updateProfile(5L, " Ali ", " Saleh ", "+96891234567", null);
 
         assertThat(updated.getFirstName()).isEqualTo("Ali");
         assertThat(updated.getLastName()).isEqualTo("Saleh");
         assertThat(updated.getPhoneNumber()).isEqualTo("+96891234567");
         assertThat(updated.getEmail()).isEqualTo("ali@mail.com");
+        assertThat(updated.getPreferredLanguage()).isEqualTo("en");   // null = keep current
+    }
+
+    @Test
+    void updateProfile_changesTheLanguageWhenGiven() {
+        User user = new User("Ali", "Hassan", "ali@mail.com", "hash");
+        when(userRepository.findById(5L)).thenReturn(Optional.of(user));
+
+        assertThat(userService.updateProfile(5L, "Ali", "Hassan", null, "fr").getPreferredLanguage()).isEqualTo("fr");
     }
 
     @Test

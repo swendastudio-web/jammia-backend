@@ -49,6 +49,10 @@ public class User {
     @JoinColumn(name = "subscription_plan_id", nullable = false)
     private SubscriptionPlan subscriptionPlan;
 
+    // Language code chosen in the app, e.g. "en", "ar". The app decides which languages exist.
+    @Column(name = "preferred_language", nullable = false, length = 10)
+    private String preferredLanguage = "en";
+
     // USER or ADMIN. New users are always USER.
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -128,6 +132,14 @@ public class User {
 
     public void setSubscriptionPlan(SubscriptionPlan subscriptionPlan) {
         this.subscriptionPlan = subscriptionPlan;
+    }
+
+    public String getPreferredLanguage() {
+        return preferredLanguage;
+    }
+
+    public void setPreferredLanguage(String preferredLanguage) {
+        this.preferredLanguage = preferredLanguage;
     }
 
     public UserRole getRole() {

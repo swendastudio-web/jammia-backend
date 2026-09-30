@@ -4,6 +4,7 @@ import com.jamia.backend.config.SecurityConfig;
 import com.jamia.backend.entity.SubscriptionPlan;
 import com.jamia.backend.entity.SubscriptionPlanCode;
 import com.jamia.backend.entity.User;
+import com.jamia.backend.service.AppSettingsService;
 import com.jamia.backend.service.SubscriptionPlanService;
 import com.jamia.backend.service.UserService;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,9 @@ class AdminControllerTest {
 
     @MockitoBean
     private UserService userService;
+
+    @MockitoBean
+    private AppSettingsService appSettingsService;
 
     @Test
     void admin_canChangeAPlanLimit() throws Exception {

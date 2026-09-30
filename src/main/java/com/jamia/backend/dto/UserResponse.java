@@ -16,6 +16,7 @@ public record UserResponse(
         String phoneNumber,
         String subscriptionPlan,
         String role,
+        String preferredLanguage,
         boolean hasProfilePhoto,
         LocalDateTime createdAt
 ) {
@@ -29,6 +30,7 @@ public record UserResponse(
                 user.getPhoneNumber(),
                 user.getSubscriptionPlan() == null ? null : user.getSubscriptionPlan().getCode().name(),
                 user.getRole().name(),
+                user.getPreferredLanguage(),
                 user.getProfilePhotoFilename() != null,
                 user.getCreatedAt()
         );

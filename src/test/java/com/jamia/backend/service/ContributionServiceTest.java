@@ -56,7 +56,7 @@ class ContributionServiceTest {
         User payer = user(PAYER_ID);
         User recipient = user(RECIPIENT_ID);
         room = new SavingsRoom("Family", null, new BigDecimal("100.00"), "AED",
-                ContributionFrequency.MONTHLY, 3, payer, "CODE2345");
+                ContributionFrequency.MONTHLY, 3, payer);
         room.start(TurnOrderMethod.RANDOM, LocalDate.now());
         contribution = new Contribution(room, 1, LocalDate.now(), new RoomMember(room, payer),
                 new RoomMember(room, recipient), new BigDecimal("100.00"));

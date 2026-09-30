@@ -25,7 +25,6 @@ public record RoomResponse(
         RoomStatus status,
         TurnOrderMethod turnOrderMethod,
         LocalDate startDate,
-        String joinCode,
         Long creatorUserId,
         LocalDateTime createdAt,
         List<RoomMemberResponse> members
@@ -43,7 +42,6 @@ public record RoomResponse(
                 room.getStatus(),
                 room.getTurnOrderMethod(),
                 room.getStartDate(),
-                room.getJoinCode(),
                 room.getCreator().getId(),
                 room.getCreatedAt(),
                 members.stream().map(RoomMemberResponse::from).toList()
